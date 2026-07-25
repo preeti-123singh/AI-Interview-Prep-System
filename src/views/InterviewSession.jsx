@@ -49,6 +49,8 @@ export default function InterviewSession() {
   const [permissionError, setPermissionError] = useState(null);
   const [waveLevels, setWaveLevels] = useState(new Array(20).fill(4));
   const [questionStartedAt, setQuestionStartedAt] = useState(Date.now());
+  const [videoDevices, setVideoDevices] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState(null);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -59,34 +61,54 @@ export default function InterviewSession() {
 
   const question = QUESTIONS[qIndex];
 
-  // ---- Camera + mic stream setup ----
+  // ---- Start (or restart) the camera + mic stream for a given camera device ----
+  const startStream = useCallback(async (deviceId) => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close();
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: deviceId ? { deviceId: { exact: deviceId } } : true,
+        audio: true,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      source.connect(analyser);
+      audioCtxRef.current = audioCtx;
+      analyserRef.current = analyser;
+      setPermissionError(null);
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter((d) => d.kind === "videoinput");
+      setVideoDevices(cams);
+      const activeTrack = stream.getVideoTracks()[0];
+      if (activeTrack) {
+        const settings = activeTrack.getSettings();
+        if (settings.deviceId) setSelectedDeviceId(settings.deviceId);
+      }
+    } catch (err) {
+      setPermissionError(
+        "Camera/microphone access was denied or unavailable. Allow permissions and refresh to enable live features."
+      );
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
-    async function setup() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
-
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        const audioCtx = new AudioContext();
-        const source = audioCtx.createMediaStreamSource(stream);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 64;
-        source.connect(analyser);
-        audioCtxRef.current = audioCtx;
-        analyserRef.current = analyser;
-      } catch (err) {
-        setPermissionError("Camera/microphone access was denied or unavailable. Allow permissions and refresh to enable live features.");
-      }
-    }
-
-    setup();
+    (async () => {
+      if (!cancelled) await startStream(null);
+    })();
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -109,9 +131,7 @@ export default function InterviewSession() {
         setInterim(interimText);
       };
 
-      recognition.onerror = () => {
-        // fail silently, waveform + manual controls still work
-      };
+      recognition.onerror = () => {};
 
       recognitionRef.current = recognition;
     }
@@ -125,13 +145,11 @@ export default function InterviewSession() {
     };
   }, []);
 
-  // ---- Camera on/off toggle ----
   useEffect(() => {
     if (!streamRef.current) return;
     streamRef.current.getVideoTracks().forEach((t) => (t.enabled = cameraOn));
   }, [cameraOn]);
 
-  // ---- Mic toggle drives speech recognition + waveform loop ----
   useEffect(() => {
     if (!streamRef.current) return;
     streamRef.current.getAudioTracks().forEach((t) => (t.enabled = micOn));
@@ -140,9 +158,7 @@ export default function InterviewSession() {
       if (recognitionRef.current) {
         try {
           recognitionRef.current.start();
-        } catch (e) {
-          /* already started */
-        }
+        } catch (e) {}
       }
       const loop = () => {
         if (analyserRef.current) {
@@ -161,9 +177,7 @@ export default function InterviewSession() {
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
-        } catch (e) {
-          /* already stopped */
-        }
+        } catch (e) {}
       }
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       setWaveLevels(new Array(20).fill(4));
@@ -174,7 +188,6 @@ export default function InterviewSession() {
     };
   }, [micOn]);
 
-  // ---- Countdown timer ----
   useEffect(() => {
     if (timeLeft <= 0) return;
     const id = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
@@ -193,11 +206,10 @@ export default function InterviewSession() {
     if (qIndex < QUESTIONS.length - 1) {
       goToQuestion(qIndex + 1);
     } else {
-      navigate("/"); // TODO: replace with /results once the analytics dashboard page is built
+      navigate("/");
     }
   };
 
-  // ---- Live heuristic scoring from transcript (placeholder for backend NLP/BERT scoring) ----
   const words = transcript.trim() ? transcript.trim().split(/\s+/) : [];
   const wordCount = words.length;
   const fillerCount = words.filter((w) => FILLER_WORDS.includes(w.toLowerCase().replace(/[^a-z]/g, ""))).length;
@@ -211,7 +223,6 @@ export default function InterviewSession() {
     <div className="relative min-h-screen bg-navy-600 text-white overflow-hidden">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:64px_64px] [mask-image:radial-gradient(ellipse_80%_60%_at_50%_0%,black_40%,transparent_100%)]" />
 
-      {/* top bar */}
       <div className="relative z-10 flex items-center justify-between px-6 md:px-10 py-5 border-b border-white/10">
         <Link to="/" className="flex items-center gap-2 text-sm text-navy-100/60 hover:text-white transition-colors">
           <FaArrowLeft /> Exit
@@ -233,7 +244,6 @@ export default function InterviewSession() {
       )}
 
       <div className="relative z-10 max-w-6xl mx-auto px-6 md:px-10 py-8 grid lg:grid-cols-[1.3fr_1fr] gap-6">
-        {/* left: camera + question */}
         <div className="space-y-5">
           <AnimatePresence mode="wait">
             <motion.div
@@ -265,7 +275,22 @@ export default function InterviewSession() {
               </div>
             )}
 
-            {/* controls overlay */}
+            {videoDevices.length > 1 && (
+              <div className="absolute top-4 left-4">
+                <select
+                  value={selectedDeviceId || ""}
+                  onChange={(e) => startStream(e.target.value)}
+                  className="bg-black/60 border border-white/20 rounded-md text-xs text-white px-2 py-1.5 max-w-[180px]"
+                >
+                  {videoDevices.map((d, i) => (
+                    <option key={d.deviceId} value={d.deviceId}>
+                      {d.label || `Camera ${i + 1}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3">
               <button
                 onClick={() => setMicOn((v) => !v)}
@@ -291,7 +316,6 @@ export default function InterviewSession() {
               </button>
             </div>
 
-            {/* live waveform */}
             <div className="absolute top-4 right-4 flex items-end gap-[3px] h-8 bg-black/40 rounded-lg px-2 py-1">
               {waveLevels.map((h, i) => (
                 <span
@@ -303,7 +327,6 @@ export default function InterviewSession() {
             </div>
           </div>
 
-          {/* transcript */}
           <div className="rounded-2xl border border-white/10 bg-navy-500/40 px-5 py-4 min-h-[100px]">
             <span className="block font-mono text-[11px] tracking-widest text-teal-400 mb-2">
               LIVE TRANSCRIPT
@@ -341,7 +364,6 @@ export default function InterviewSession() {
           </div>
         </div>
 
-        {/* right: live analysis panel */}
         <div className="space-y-5">
           <div className="rounded-2xl border border-white/10 bg-navy-500/50 px-5 py-5">
             <span className="block font-mono text-[11px] tracking-widest text-teal-400 mb-1">
@@ -356,7 +378,7 @@ export default function InterviewSession() {
               {[
                 { label: "Confidence", value: confidence },
                 { label: "Clarity", value: clarity },
-                { label: "Pace (WPM)", value: pace, isRaw: true, rawSuffix: "" },
+                { label: "Pace (WPM)", value: pace, isRaw: true },
               ].map((m) => (
                 <div key={m.label}>
                   <div className="flex justify-between font-mono text-[11px] text-navy-100/60 mb-1.5">
