@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import LandingPage from './views/LandingPage';
 import InterviewSession from './views/InterviewSession';
+import ResultsDashboard from './views/ResultsDashboard';
 
 function App() {
   return (
@@ -9,7 +10,7 @@ function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/interview" element={<InterviewSession />} />
-        {/* Page 3 — Results / Analytics Dashboard — will be added here as /results */}
+        <Route path="/results" element={<ResultsDashboard />} />
       </Routes>
     </Router>
   );

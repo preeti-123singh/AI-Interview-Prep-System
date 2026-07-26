@@ -23,16 +23,12 @@ const QUESTIONS = [
   "Where do you see yourself applying these skills in the next two years?",
 ];
 
-const QUESTION_TIME = 120; // seconds
+const QUESTION_TIME = 120;
 const FILLER_WORDS = ["um", "uh", "uhh", "umm", "like", "actually", "basically", "you know"];
 
 function formatTime(sec) {
-  const m = Math.floor(sec / 60)
-    .toString()
-    .padStart(2, "0");
-  const s = Math.floor(sec % 60)
-    .toString()
-    .padStart(2, "0");
+  const m = Math.floor(sec / 60).toString().padStart(2, "0");
+  const s = Math.floor(sec % 60).toString().padStart(2, "0");
   return `${m}:${s}`;
 }
 
@@ -58,10 +54,10 @@ export default function InterviewSession() {
   const analyserRef = useRef(null);
   const rafRef = useRef(null);
   const recognitionRef = useRef(null);
+  const sessionDataRef = useRef([]);
 
   const question = QUESTIONS[qIndex];
 
-  // ---- Start (or restart) the camera + mic stream for a given camera device ----
   const startStream = useCallback(async (deviceId) => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -203,10 +199,23 @@ export default function InterviewSession() {
   }, []);
 
   const handleNext = () => {
+    sessionDataRef.current.push({
+      question,
+      transcript: transcript.trim(),
+      wordCount,
+      fillerCount,
+      pace,
+      confidence,
+      clarity,
+    });
+
     if (qIndex < QUESTIONS.length - 1) {
       goToQuestion(qIndex + 1);
     } else {
-      navigate("/");
+      try {
+        sessionStorage.setItem("interviewResults", JSON.stringify(sessionDataRef.current));
+      } catch (e) {}
+      navigate("/results");
     }
   };
 
