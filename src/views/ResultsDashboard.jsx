@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -15,12 +16,15 @@ import {
   Tooltip,
 } from "recharts";
 import {
-  FaArrowLeft,
+ FaArrowLeft,
   FaRedo,
   FaChevronDown,
   FaLightbulb,
   FaTrophy,
+  FaSignOutAlt,
+  FaHistory,
 } from "react-icons/fa";
+import { useAuth } from "../context/AuthContext";
 
 function average(arr, key) {
   if (!arr.length) return 0;
@@ -131,6 +135,7 @@ function QuestionCard({ item, index, isOpen, onToggle }) {
 
 export default function ResultsDashboard() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const [data, setData] = useState(null);
   const [openIndex, setOpenIndex] = useState(null);
 
@@ -195,12 +200,29 @@ export default function ResultsDashboard() {
         <Link to="/" className="flex items-center gap-2 text-sm text-navy-100/60 hover:text-white transition-colors">
           <FaArrowLeft /> Home
         </Link>
-        <button
-          onClick={() => navigate("/interview")}
-          className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-teal-400 transition-colors"
-        >
-          <FaRedo className="text-xs" /> Retake Interview
-        </button>
+           <div className="flex items-center gap-3">
+  <button
+    onClick={() => navigate("/history")}
+    className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-teal-400 transition-colors"
+  >
+    <FaHistory className="text-xs" /> History
+  </button>
+  <button
+    onClick={() => navigate("/interview")}
+    className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-teal-400 transition-colors"
+  >
+    <FaRedo className="text-xs" /> Retake Interview
+  </button>
+  <button
+    onClick={() => {
+      logout();
+      navigate("/login");
+    }}
+    className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-red-400 transition-colors"
+  >
+    <FaSignOutAlt className="text-xs" /> Logout
+  </button>
+</div>
       </div>
 
       <div className="relative z-10 max-w-6xl mx-auto px-6 md:px-10 py-8">

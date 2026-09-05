@@ -10,7 +10,11 @@ import {
   FaArrowRight,
   FaClock,
   FaFlagCheckered,
+  FaSignOutAlt,
+  
 } from "react-icons/fa";
+import axios from "axios";
+import { useAuth } from "../context/AuthContext";
 
 const QUESTIONS = [
   "Tell me about a time you handled a tight deadline.",
@@ -34,7 +38,7 @@ function formatTime(sec) {
 
 export default function InterviewSession() {
   const navigate = useNavigate();
-
+  const { logout, token } = useAuth();
   const [qIndex, setQIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(QUESTION_TIME);
   const [cameraOn, setCameraOn] = useState(true);
@@ -53,8 +57,9 @@ export default function InterviewSession() {
   const audioCtxRef = useRef(null);
   const analyserRef = useRef(null);
   const rafRef = useRef(null);
-  const recognitionRef = useRef(null);
-  const sessionDataRef = useRef([]);
+ const recognitionRef = useRef(null);
+const sessionDataRef = useRef([]);
+const micOnRef = useRef(false);
 
   const question = QUESTIONS[qIndex];
 
@@ -127,9 +132,21 @@ export default function InterviewSession() {
         setInterim(interimText);
       };
 
-      recognition.onerror = () => {};
+     recognition.onerror = (event) => {
+  console.warn("Speech recognition error:", event.error);
+};
 
-      recognitionRef.current = recognition;
+recognition.onend = () => {
+  // Browsers sometimes stop recognition on their own after a while.
+  // If the mic is still supposed to be on, restart it automatically.
+  if (micOnRef.current) {
+    try {
+      recognition.start();
+    } catch (e) {}
+  }
+};
+
+recognitionRef.current = recognition;
     }
 
     return () => {
@@ -146,9 +163,12 @@ export default function InterviewSession() {
     streamRef.current.getVideoTracks().forEach((t) => (t.enabled = cameraOn));
   }, [cameraOn]);
 
-  useEffect(() => {
-    if (!streamRef.current) return;
-    streamRef.current.getAudioTracks().forEach((t) => (t.enabled = micOn));
+ useEffect(() => {
+  micOnRef.current = micOn;
+  if (!streamRef.current) return;
+  streamRef.current.getAudioTracks().forEach((t) => (t.enabled = micOn));
+
+  
 
     if (micOn) {
       if (recognitionRef.current) {
@@ -199,25 +219,54 @@ export default function InterviewSession() {
   }, []);
 
   const handleNext = () => {
-    sessionDataRef.current.push({
-      question,
-      transcript: transcript.trim(),
-      wordCount,
-      fillerCount,
-      pace,
-      confidence,
-      clarity,
-    });
+  sessionDataRef.current.push({
+    question,
+    transcript: transcript.trim(),
+    wordCount,
+    fillerCount,
+    pace,
+    confidence,
+    clarity,
+  });
 
-    if (qIndex < QUESTIONS.length - 1) {
-      goToQuestion(qIndex + 1);
-    } else {
-      try {
-        sessionStorage.setItem("interviewResults", JSON.stringify(sessionDataRef.current));
-      } catch (e) {}
-      navigate("/results");
-    }
-  };
+  if (qIndex < QUESTIONS.length - 1) {
+    goToQuestion(qIndex + 1);
+  } else {
+    const finalData = sessionDataRef.current;
+
+    try {
+      sessionStorage.setItem("interviewResults", JSON.stringify(finalData));
+    } catch (e) {}
+
+    const avg = (key) =>
+      finalData.length
+        ? Math.round(finalData.reduce((sum, d) => sum + d[key], 0) / finalData.length)
+        : 0;
+
+    const totalWords = finalData.reduce((s, d) => s + d.wordCount, 0);
+    const totalFillers = finalData.reduce((s, d) => s + d.fillerCount, 0);
+    const fillerControlScore =
+      totalWords > 0 ? Math.max(0, Math.round(100 - (totalFillers / totalWords) * 400)) : 100;
+    const engagementScore = Math.min(100, Math.round(avg("wordCount") / 1.3));
+
+    axios
+      .post(
+        "http://localhost:8000/interviews",
+        {
+          overall_confidence: avg("confidence"),
+          overall_clarity: avg("clarity"),
+          overall_pacing: avg("pace"),
+          filler_control: fillerControlScore,
+          engagement: engagementScore,
+          questions_data: finalData,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      .catch((err) => console.error("Failed to save interview to history:", err));
+
+    navigate("/results");
+  }
+};
 
   const words = transcript.trim() ? transcript.trim().split(/\s+/) : [];
   const wordCount = words.length;
@@ -240,9 +289,18 @@ export default function InterviewSession() {
           <span>
             Question <span className="text-white font-semibold">{qIndex + 1}</span> of {QUESTIONS.length}
           </span>
-          <span className={`flex items-center gap-1.5 ${timeLeft <= 20 ? "text-red-400" : "text-teal-400"}`}>
+                   <span className={`flex items-center gap-1.5 ${timeLeft <= 20 ? "text-red-400" : "text-teal-400"}`}>
             <FaClock /> {formatTime(timeLeft)}
           </span>
+          <button
+            onClick={() => {
+              logout();
+              navigate("/login");
+            }}
+            className="flex items-center gap-1.5 hover:text-red-400 transition-colors"
+          >
+            <FaSignOutAlt /> Logout
+          </button>
         </div>
       </div>
 
