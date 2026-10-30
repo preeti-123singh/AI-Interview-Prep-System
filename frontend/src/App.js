@@ -5,6 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import LandingPage from './views/LandingPage';
 import Login from './views/Login';
 import Signup from './views/Signup';
+import InterviewSetup from './views/InterviewSetup';
 import InterviewSession from './views/InterviewSession';
 import ResultsDashboard from './views/ResultsDashboard';
 import History from './views/History';
@@ -17,6 +18,14 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route
+            path="/setup"
+            element={
+              <ProtectedRoute>
+                <InterviewSetup />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/interview"
             element={

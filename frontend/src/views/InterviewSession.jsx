@@ -16,17 +16,14 @@ import {
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 
-const QUESTIONS = [
-  "Tell me about a time you handled a tight deadline.",
-  "Walk me through a project you're most proud of.",
-  "Describe a situation where you disagreed with a teammate. How did you handle it?",
-  "What's a technical concept you had to learn quickly for a project?",
-  "Tell me about a time you failed at something. What did you learn?",
-  "How do you prioritize tasks when everything feels urgent?",
-  "Describe a time you had to explain something technical to a non-technical person.",
-  "Where do you see yourself applying these skills in the next two years?",
-];
-
+function loadSetup() {
+  try {
+    const saved = sessionStorage.getItem("interviewSetup");
+    return saved ? JSON.parse(saved) : null;
+  } catch (e) {
+    return null;
+  }
+}
 const QUESTION_TIME = 120;
 const FILLER_WORDS = ["um", "uh", "uhh", "umm", "like", "actually", "basically", "you know"];
 
@@ -39,6 +36,12 @@ function formatTime(sec) {
 export default function InterviewSession() {
   const navigate = useNavigate();
   const { logout, token } = useAuth();
+    const [setup] = useState(loadSetup);
+  const QUESTIONS = setup ? setup.questions : [];
+
+  useEffect(() => {
+    if (!setup) navigate("/setup", { replace: true });
+  }, [setup, navigate]);
   const [qIndex, setQIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(QUESTION_TIME);
   const [cameraOn, setCameraOn] = useState(true);
@@ -237,6 +240,7 @@ recognitionRef.current = recognition;
     try {
       sessionStorage.setItem("interviewResults", JSON.stringify(finalData));
     } catch (e) {}
+        sessionStorage.removeItem("interviewSetup");
 
     const avg = (key) =>
       finalData.length

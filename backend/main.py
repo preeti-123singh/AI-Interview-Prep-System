@@ -4,6 +4,11 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from typing import List
 import json
+import os
+import re
+from dotenv import load_dotenv
+from openai import OpenAI
+from pydantic import BaseModel
 
 from database import Base, engine, SessionLocal
 import models
@@ -11,6 +16,13 @@ import schemas
 import auth_utils
 
 Base.metadata.create_all(bind=engine)
+load_dotenv()
+
+llm_client = OpenAI(
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1",
+)
+LLM_MODEL = "openai/gpt-oss-120b"
 
 app = FastAPI(title="Interview Prep API")
 
@@ -81,7 +93,75 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 @app.get("/me", response_model=schemas.UserOut)
 def read_current_user(current_user: models.User = Depends(get_current_user)):
     return current_user
+class QuestionRequest(BaseModel):
+    domain: str
+    difficulty: str = "medium"
 
+
+def fallback_questions(domain: str):
+    # Used only if the AI call fails, so the demo never breaks
+    return [
+        f"Tell me about yourself and why you chose {domain}.",
+        f"What are the core concepts every beginner in {domain} must know?",
+        f"Describe a project you worked on related to {domain}.",
+        f"What tools or technologies do you use in {domain}, and why?",
+        f"Explain a difficult problem you faced in {domain} and how you solved it.",
+        f"How do you keep your {domain} skills up to date?",
+        f"Where do you see yourself in {domain} in the next three years?",
+        "Why should we hire you?",
+    ]
+
+
+@app.post("/questions/generate")
+def generate_questions(
+    req: QuestionRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    domain = req.domain.strip()[:100]
+    if not domain:
+        raise HTTPException(status_code=400, detail="Domain is required")
+
+    difficulty = req.difficulty.strip().lower()
+    if difficulty not in ("easy", "medium", "hard"):
+        difficulty = "medium"
+
+    prompt = (
+        f"Generate exactly 8 mock interview questions for a student applying in the "
+        f"domain: {domain}. Difficulty level: {difficulty}. "
+        f"Mix technical and behavioural questions. Each question must be answerable "
+        f"verbally in about one minute. "
+        f"Return ONLY a JSON array of 8 strings. No numbering, no explanation, no markdown."
+    )
+
+    try:
+        response = llm_client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "You are an interview question generator. You reply with JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+        )
+        text = response.choices[0].message.content.strip()
+        text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
+        questions = json.loads(text)
+        if not isinstance(questions, list):
+            raise ValueError("Not a list")
+        questions = [str(q).strip() for q in questions if str(q).strip()][:8]
+        if len(questions) < 5:
+            raise ValueError("Too few questions")
+        source = "ai"
+    except Exception as e:
+        print("Question generation failed:", e)
+        questions = fallback_questions(domain)
+        source = "fallback"
+
+    return {
+        "domain": domain,
+        "difficulty": difficulty,
+        "source": source,
+        "questions": questions,
+    }
 
 @app.post("/interviews", response_model=schemas.SessionOut)
 def create_interview(
