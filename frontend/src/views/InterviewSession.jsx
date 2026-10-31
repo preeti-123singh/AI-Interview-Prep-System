@@ -64,6 +64,7 @@ export default function InterviewSession() {
   const rafRef = useRef(null);
  const recognitionRef = useRef(null);
 const sessionDataRef = useRef([]);
+const framesRef = useRef([]);
 const micOnRef = useRef(false);
 
   const question = QUESTIONS[qIndex];
@@ -228,6 +229,21 @@ recognitionRef.current = recognition;
     const id = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
     return () => clearInterval(id);
   }, [timeLeft, qIndex]);
+  const captureFrame = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !cameraOn || video.videoWidth === 0) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = Math.round((video.videoHeight / video.videoWidth) * 320);
+    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+    framesRef.current.push(canvas.toDataURL("image/jpeg", 0.6));
+    if (framesRef.current.length > 8) framesRef.current.shift();
+  }, [cameraOn]);
+
+  useEffect(() => {
+    const id = setInterval(captureFrame, 2000);
+    return () => clearInterval(id);
+  }, [captureFrame]);
 
   const goToQuestion = useCallback((nextIndex) => {
     setQIndex(nextIndex);
@@ -239,6 +255,8 @@ recognitionRef.current = recognition;
   const handleNext = async () => {
     if (analyzing) return;
     setAnalyzing(true);
+    const frames = framesRef.current.slice();
+    framesRef.current = [];
 
     let analysis = null;
     try {
@@ -256,6 +274,23 @@ recognitionRef.current = recognition;
       }
       console.error("Analysis failed, using live estimate:", err);
     }
+    let face = null;
+    try {
+      const faceRes = await axios.post(
+        "http://localhost:8000/face/analyze",
+        { frames },
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
+      );
+      face = faceRes.data;
+    } catch (err) {
+      console.error("Face analysis failed:", err);
+    }
+
+    const speechConfidence = analysis ? analysis.confidence : confidence;
+    const finalConfidence =
+      face && face.face_detected > 0 && wordCount > 0
+        ? Math.round(0.8 * speechConfidence + 0.2 * face.expression_score)
+        : speechConfidence;
 
     sessionDataRef.current.push({
       question,
@@ -263,7 +298,10 @@ recognitionRef.current = recognition;
       wordCount,
       fillerCount,
       pace,
-      confidence: analysis ? analysis.confidence : confidence,
+      confidence: finalConfidence,
+      faceExpression: face ? face.expression_score : 0,
+      facePresence: face ? face.face_presence : 0,
+      dominantEmotion: face ? face.dominant_emotion : "",
       clarity: analysis ? analysis.clarity : clarity,
       relevance: analysis ? analysis.relevance : 0,
       depth: analysis ? analysis.depth : 0,
@@ -294,8 +332,13 @@ recognitionRef.current = recognition;
       const totalFillers = finalData.reduce((s, d) => s + d.fillerCount, 0);
       const fillerControlScore =
         totalWords > 0 ? Math.max(0, Math.round(100 - (totalFillers / totalWords) * 400)) : 100;
-      const engagementScore = Math.min(100, Math.round(avg("wordCount") / 1.3));
-
+           const answeredData = finalData.filter((d) => d.wordCount > 0);
+      const avgPresence = answeredData.length
+        ? Math.round(answeredData.reduce((s, d) => s + (d.facePresence || 0), 0) / answeredData.length)
+        : 0;
+      const wordsScore = Math.min(100, Math.round(avg("wordCount") / 1.3));
+      const engagementScore =
+        avgPresence > 0 ? Math.round(0.6 * avgPresence + 0.4 * wordsScore) : wordsScore;
       try {
         await axios.post(
           "http://localhost:8000/interviews",

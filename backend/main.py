@@ -17,6 +17,11 @@ import auth_utils
 import nlp_engine
 nlp_engine._load()
 import llm_judge
+import face_engine
+try:
+    face_engine._load()
+except Exception as e:
+    print("Face model not loaded:", e)
 
 Base.metadata.create_all(bind=engine)
 load_dotenv()
@@ -212,6 +217,16 @@ def analyze(
                 result["answer_quality"] = min(result["answer_quality"], 25)
 
     return result
+class FaceRequest(BaseModel):
+    frames: List[str]
+
+
+@app.post("/face/analyze")
+def face_analyze(
+    req: FaceRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    return face_engine.analyze_frames(req.frames[:8])
 
 @app.post("/interviews", response_model=schemas.SessionOut)
 def create_interview(

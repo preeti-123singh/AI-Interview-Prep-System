@@ -117,12 +117,13 @@ function QuestionCard({ item, index, isOpen, onToggle }) {
           transition={{ duration: 0.25 }}
           className="px-5 pb-5"
         >
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
+          <div className="grid-cols-2 sm:grid-cols-6 gap-3 mb-4">
             {[
               ["Confidence", item.confidence, "%"],
               ["Clarity", item.clarity, "%"],
               ["Relevance", item.relevance, "%"],
               ["Correctness", item.correctness, "%"],
+              ["Expression", item.faceExpression, "%"],
               ["Pace", item.pace, " WPM"],
             ].map(([label, val, suffix]) => (
               <div key={label} className="rounded-lg bg-navy-600/60 px-3 py-2.5 text-center">
@@ -134,7 +135,11 @@ function QuestionCard({ item, index, isOpen, onToggle }) {
               </div>
             ))}
           </div>
-
+          {item.dominantEmotion && (
+            <p className="text-xs text-navy-100/50 mb-3">
+              Face on camera {item.facePresence}% of the time • Main expression: {item.dominantEmotion}
+            </p>
+          )}
           {item.feedback && (
             <div className="mb-4 rounded-lg border border-teal-400/20 bg-teal-500/5 px-4 py-3">
               <p className="font-mono text-[10px] tracking-widest text-teal-400 mb-1">AI FEEDBACK</p>
@@ -225,7 +230,17 @@ export default function ResultsDashboard() {
         100 - (data.reduce((s, d) => s + d.fillerCount, 0) / Math.max(1, data.reduce((s, d) => s + d.wordCount, 0))) * 400
       ),
     },
-    { skill: "Engagement", value: Math.min(100, average(data, "wordCount") / 1.3) },
+           {
+      skill: "Engagement",
+      value: (() => {
+        const answered = data.filter((d) => d.wordCount > 0);
+        const presence = answered.length
+          ? answered.reduce((s, d) => s + (d.facePresence || 0), 0) / answered.length
+          : 0;
+        const words = Math.min(100, average(data, "wordCount") / 1.3);
+        return presence > 0 ? Math.round(0.6 * presence + 0.4 * words) : words;
+      })(),
+    },
   ];
 
   const trendData = data.map((d, i) => ({
