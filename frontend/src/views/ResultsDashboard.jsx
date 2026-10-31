@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -16,19 +15,20 @@ import {
   Tooltip,
 } from "recharts";
 import {
- FaArrowLeft,
+  FaArrowLeft,
   FaRedo,
   FaChevronDown,
   FaLightbulb,
   FaTrophy,
   FaSignOutAlt,
   FaHistory,
+  FaExclamationTriangle,
 } from "react-icons/fa";
 import { useAuth } from "../context/AuthContext";
 
 function average(arr, key) {
   if (!arr.length) return 0;
-  return Math.round(arr.reduce((sum, d) => sum + d[key], 0) / arr.length);
+  return Math.round(arr.reduce((sum, d) => sum + (d[key] || 0), 0) / arr.length);
 }
 
 function buildRecommendations(data) {
@@ -36,10 +36,17 @@ function buildRecommendations(data) {
   const avgConfidence = average(data, "confidence");
   const avgClarity = average(data, "clarity");
   const avgPace = average(data, "pace");
+  const avgCorrectness = average(data, "correctness");
   const totalFillers = data.reduce((s, d) => s + d.fillerCount, 0);
   const totalWords = data.reduce((s, d) => s + d.wordCount, 0);
   const fillerRatio = totalWords > 0 ? totalFillers / totalWords : 0;
 
+  if (data.some((d) => d.correctness > 0) && avgCorrectness < 50) {
+    recs.push({
+      title: "Strengthen your technical accuracy",
+      detail: `Your average correctness was ${avgCorrectness}%. Read the AI feedback under each question and revise those topics before your next attempt.`,
+    });
+  }
   if (fillerRatio > 0.06) {
     recs.push({
       title: "Cut down on filler words",
@@ -63,7 +70,7 @@ function buildRecommendations(data) {
       detail: "Try the STAR method (Situation, Task, Action, Result) to keep answers focused and easy to follow.",
     });
   }
-  if (avgConfidence >= 80 && fillerRatio <= 0.06) {
+  if (avgConfidence >= 80 && fillerRatio <= 0.06 && (avgCorrectness >= 60 || avgCorrectness === 0)) {
     recs.push({
       title: "Strong session overall",
       detail: "Your confidence and filler-word control were both solid this round. Keep practicing under time pressure to build consistency.",
@@ -95,7 +102,9 @@ function QuestionCard({ item, index, isOpen, onToggle }) {
           <span className="hidden sm:block font-mono text-[11px] text-navy-100/50">
             {item.wordCount} words
           </span>
-          <span className="font-mono text-xs text-teal-400 font-medium">{item.confidence}%</span>
+          <span className="font-mono text-xs text-teal-400 font-medium">
+            {item.answerQuality ?? item.confidence}%
+          </span>
           <motion.span animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.2 }}>
             <FaChevronDown className="text-navy-100/40 text-xs" />
           </motion.span>
@@ -108,21 +117,31 @@ function QuestionCard({ item, index, isOpen, onToggle }) {
           transition={{ duration: 0.25 }}
           className="px-5 pb-5"
         >
-          <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
             {[
               ["Confidence", item.confidence, "%"],
               ["Clarity", item.clarity, "%"],
+              ["Relevance", item.relevance, "%"],
+              ["Correctness", item.correctness, "%"],
               ["Pace", item.pace, " WPM"],
             ].map(([label, val, suffix]) => (
               <div key={label} className="rounded-lg bg-navy-600/60 px-3 py-2.5 text-center">
                 <div className="text-lg font-bold text-white">
-                  {val}
+                  {val ?? 0}
                   <span className="text-xs text-navy-100/50">{suffix}</span>
                 </div>
                 <div className="text-[10px] text-navy-100/50 mt-0.5">{label}</div>
               </div>
             ))}
           </div>
+
+          {item.feedback && (
+            <div className="mb-4 rounded-lg border border-teal-400/20 bg-teal-500/5 px-4 py-3">
+              <p className="font-mono text-[10px] tracking-widest text-teal-400 mb-1">AI FEEDBACK</p>
+              <p className="text-sm text-navy-100/80 leading-relaxed">{item.feedback}</p>
+            </div>
+          )}
+
           <p className="text-xs text-navy-100/40 mb-1.5 font-mono tracking-wide">YOUR ANSWER</p>
           <p className="text-sm text-navy-100/70 leading-relaxed italic">
             {item.transcript ? `"${item.transcript}"` : "No speech was captured for this question."}
@@ -173,11 +192,17 @@ export default function ResultsDashboard() {
   const avgConfidence = average(data, "confidence");
   const avgClarity = average(data, "clarity");
   const avgPace = average(data, "pace");
-  const overallScore = Math.round((avgConfidence + avgClarity) / 2);
+  const avgCorrectness = average(data, "correctness");
+  const avgQuality = average(data, "answerQuality");
+  const overallScore =
+    avgQuality > 0
+      ? Math.round((avgConfidence + avgClarity + avgQuality) / 3)
+      : Math.round((avgConfidence + avgClarity) / 2);
 
   const radarData = [
     { skill: "Confidence", value: avgConfidence },
     { skill: "Clarity", value: avgClarity },
+    { skill: "Correctness", value: avgCorrectness },
     { skill: "Pacing", value: Math.max(0, 100 - Math.abs(avgPace - 135) * 0.6) },
     {
       skill: "Filler Control",
@@ -189,8 +214,19 @@ export default function ResultsDashboard() {
     { skill: "Engagement", value: Math.min(100, average(data, "wordCount") / 1.3) },
   ];
 
-  const trendData = data.map((d, i) => ({ name: `Q${i + 1}`, Confidence: d.confidence, Clarity: d.clarity }));
+  const trendData = data.map((d, i) => ({
+    name: `Q${i + 1}`,
+    Confidence: d.confidence,
+    Clarity: d.clarity,
+    Correctness: d.correctness || 0,
+  }));
   const recommendations = buildRecommendations(data);
+
+  const weakAreas = data
+    .map((d, i) => ({ ...d, number: i + 1 }))
+    .filter((d) => (d.answerQuality ?? 100) < 60)
+    .sort((a, b) => a.answerQuality - b.answerQuality)
+    .slice(0, 3);
 
   return (
     <div className="relative min-h-screen bg-navy-600 text-white overflow-hidden">
@@ -200,29 +236,29 @@ export default function ResultsDashboard() {
         <Link to="/" className="flex items-center gap-2 text-sm text-navy-100/60 hover:text-white transition-colors">
           <FaArrowLeft /> Home
         </Link>
-           <div className="flex items-center gap-3">
-  <button
-    onClick={() => navigate("/history")}
-    className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-teal-400 transition-colors"
-  >
-    <FaHistory className="text-xs" /> History
-  </button>
-  <button
-    onClick={() => navigate("/setup")}
-    className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-teal-400 transition-colors"
-  >
-    <FaRedo className="text-xs" /> Retake Interview
-  </button>
-  <button
-    onClick={() => {
-      logout();
-      navigate("/login");
-    }}
-    className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-red-400 transition-colors"
-  >
-    <FaSignOutAlt className="text-xs" /> Logout
-  </button>
-</div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate("/history")}
+            className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-teal-400 transition-colors"
+          >
+            <FaHistory className="text-xs" /> History
+          </button>
+          <button
+            onClick={() => navigate("/setup")}
+            className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-teal-400 transition-colors"
+          >
+            <FaRedo className="text-xs" /> Retake Interview
+          </button>
+          <button
+            onClick={() => {
+              logout();
+              navigate("/login");
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-red-400 transition-colors"
+          >
+            <FaSignOutAlt className="text-xs" /> Logout
+          </button>
+        </div>
       </div>
 
       <div className="relative z-10 max-w-6xl mx-auto px-6 md:px-10 py-8">
@@ -271,7 +307,7 @@ export default function ResultsDashboard() {
             className="rounded-2xl border border-white/10 bg-navy-500/40 px-5 py-5"
           >
             <span className="block font-mono text-[11px] tracking-widest text-teal-400 mb-4">
-              CONFIDENCE TREND ACROSS SESSION
+              SCORE TREND ACROSS SESSION
             </span>
             <div style={{ width: "100%", height: 260 }}>
               <ResponsiveContainer>
@@ -285,11 +321,40 @@ export default function ResultsDashboard() {
                   />
                   <Line type="monotone" dataKey="Confidence" stroke="#00B4D8" strokeWidth={2.5} dot={{ r: 3 }} />
                   <Line type="monotone" dataKey="Clarity" stroke="#48CAE4" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2.5 }} />
+                  <Line type="monotone" dataKey="Correctness" stroke="#F4A261" strokeWidth={2} dot={{ r: 2.5 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </motion.div>
         </div>
+
+        {weakAreas.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+            className="rounded-2xl border border-amber-400/25 bg-amber-500/5 px-5 py-5 mb-8"
+          >
+            <span className="flex items-center gap-2 font-mono text-[11px] tracking-widest text-amber-300 mb-4">
+              <FaExclamationTriangle /> WEAK AREAS — REVISIT THESE
+            </span>
+            <div className="space-y-3">
+              {weakAreas.map((w) => (
+                <div key={w.number} className="rounded-lg bg-navy-600/50 px-4 py-3.5">
+                  <div className="flex items-start justify-between gap-4">
+                    <p className="text-sm font-semibold text-white">
+                      Q{w.number}. {w.question}
+                    </p>
+                    <span className="shrink-0 font-mono text-xs text-amber-300">{w.answerQuality}%</span>
+                  </div>
+                  {w.feedback && (
+                    <p className="text-xs text-navy-100/60 leading-relaxed mt-1.5">{w.feedback}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
 
         <motion.div
           initial={{ opacity: 0, y: 12 }}
