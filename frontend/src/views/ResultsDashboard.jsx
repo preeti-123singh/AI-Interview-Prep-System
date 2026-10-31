@@ -160,7 +160,7 @@ export default function ResultsDashboard() {
             Complete a mock interview first and your results will show up here automatically.
           </p>
           <Link
-            to="/interview"
+            to="/setup"
             className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-teal-500 to-teal-600 px-6 py-3 font-semibold"
           >
             Start an Interview
@@ -208,7 +208,7 @@ export default function ResultsDashboard() {
     <FaHistory className="text-xs" /> History
   </button>
   <button
-    onClick={() => navigate("/interview")}
+    onClick={() => navigate("/setup")}
     className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-teal-400 transition-colors"
   >
     <FaRedo className="text-xs" /> Retake Interview

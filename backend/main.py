@@ -14,6 +14,9 @@ from database import Base, engine, SessionLocal
 import models
 import schemas
 import auth_utils
+import nlp_engine
+nlp_engine._load()
+import llm_judge
 
 Base.metadata.create_all(bind=engine)
 load_dotenv()
@@ -162,6 +165,48 @@ def generate_questions(
         "source": source,
         "questions": questions,
     }
+class AnalyzeRequest(BaseModel):
+    question: str
+    answer: str
+
+
+@app.post("/analyze")
+def analyze(
+    req: AnalyzeRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    result = nlp_engine.analyze_answer(req.question, req.answer)
+    result["bert_similarity"] = result["relevance"]
+    result["correctness"] = 0
+    result["feedback"] = ""
+
+    if result["word_count"] > 0 and not result["gave_up"]:
+        judged = llm_judge.judge_answer(req.question, req.answer)
+        if judged:
+            fluency = result.get("fluency", 0)
+            result["relevance"] = judged["relevance"]
+            result["correctness"] = judged["correctness"]
+            result["feedback"] = judged["feedback"]
+            result["clarity"] = round(0.5 * judged["relevance"] + 0.5 * fluency)
+            result["answer_quality"] = round(
+                0.45 * judged["correctness"]
+                + 0.25 * judged["relevance"]
+                + 0.15 * result["depth"]
+                + 0.15 * fluency
+            )
+
+            content = (judged["relevance"] + judged["correctness"]) / 2
+            result["confidence"] = round(
+                result["confidence"] * (0.3 + 0.7 * content / 100)
+            )
+
+            if result["word_count"] < 8:
+                result["relevance"] = min(result["relevance"], 30)
+                result["correctness"] = min(result["correctness"], 30)
+                result["clarity"] = min(result["clarity"], 30)
+                result["answer_quality"] = min(result["answer_quality"], 25)
+
+    return result
 
 @app.post("/interviews", response_model=schemas.SessionOut)
 def create_interview(

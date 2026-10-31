@@ -181,7 +181,7 @@ export default function LandingPage() {
           </a>
         </div>
         <Link
-          to="/interview"
+          to="/setup"
           className="rounded-lg border border-white/10 px-4 py-2 text-sm font-medium hover:border-teal-400 transition-colors"
         >
           Start Interview
@@ -205,7 +205,7 @@ export default function LandingPage() {
           </p>
           <div className="flex items-center gap-5 mb-14">
             <Link
-              to="/interview"
+              to="/setup"
               className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-teal-500 to-teal-600 px-6 py-3 font-semibold shadow-lg shadow-teal-500/20 hover:-translate-y-0.5 transition-transform"
             >
               Start Interview <FaArrowRight className="text-sm" />
@@ -266,7 +266,7 @@ export default function LandingPage() {
           <h2 className="text-2xl md:text-3xl font-bold mb-3">Ready to see where you actually stand?</h2>
           <p className="text-navy-100/60 mb-8">No sign-up friction. Start a session and get scored in minutes.</p>
           <Link
-            to="/interview"
+            to="/setup"
             className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-teal-500 to-teal-600 px-7 py-3.5 font-semibold shadow-lg shadow-teal-500/20 hover:-translate-y-0.5 transition-transform"
           >
             Start Interview <FaArrowRight className="text-sm" />

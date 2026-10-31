@@ -145,7 +145,7 @@ export default function History() {
               Complete a mock interview to see your history here.
             </p>
             <Link
-              to="/interview"
+              to="/setup"
               className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-teal-500 to-teal-600 px-6 py-3 font-semibold mt-6"
             >
               Start an Interview

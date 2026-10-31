@@ -43,6 +43,8 @@ export default function InterviewSession() {
     if (!setup) navigate("/setup", { replace: true });
   }, [setup, navigate]);
   const [qIndex, setQIndex] = useState(0);
+  const [analyzing, setAnalyzing] = useState(false);
+  const[speechIssue, setSpeechIssue] = useState(null);
   const [timeLeft, setTimeLeft] = useState(QUESTION_TIME);
   const [cameraOn, setCameraOn] = useState(true);
   const [micOn, setMicOn] = useState(false);
@@ -124,6 +126,7 @@ const micOnRef = useRef(false);
       recognition.lang = "en-US";
 
       recognition.onresult = (event) => {
+        setSpeechIssue(null);
         let finalText = "";
         let interimText = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -139,16 +142,29 @@ const micOnRef = useRef(false);
   console.warn("Speech recognition error:", event.error);
 };
 
-recognition.onend = () => {
-  // Browsers sometimes stop recognition on their own after a while.
-  // If the mic is still supposed to be on, restart it automatically.
-  if (micOnRef.current) {
-    try {
-      recognition.start();
-    } catch (e) {}
-  }
-};
+      recognition.onerror = (event) => {
+        console.warn("Speech recognition error:", event.error);
+        if (event.error === "network") {
+          setSpeechIssue(
+            "Speech service lost its internet connection. Reconnecting... If this keeps happening, check your internet or turn off VPN."
+          );
+        } else if (event.error === "not-allowed" || event.error === "audio-capture") {
+          setSpeechIssue("Microphone problem (" + event.error + "). Check your mic permission.");
+        }
+      };
 
+      recognition.onend = () => {
+        // The browser sometimes stops on its own. Restart after a short wait.
+        if (micOnRef.current) {
+          setTimeout(() => {
+            if (micOnRef.current) {
+              try {
+                recognition.start();
+              } catch (e) {}
+            }
+          }, 600);
+        }
+      };
 recognitionRef.current = recognition;
     }
 
@@ -220,57 +236,84 @@ recognitionRef.current = recognition;
     setInterim("");
     setQuestionStartedAt(Date.now());
   }, []);
+  const handleNext = async () => {
+    if (analyzing) return;
+    setAnalyzing(true);
 
-  const handleNext = () => {
-  sessionDataRef.current.push({
-    question,
-    transcript: transcript.trim(),
-    wordCount,
-    fillerCount,
-    pace,
-    confidence,
-    clarity,
-  });
-
-  if (qIndex < QUESTIONS.length - 1) {
-    goToQuestion(qIndex + 1);
-  } else {
-    const finalData = sessionDataRef.current;
-
+    let analysis = null;
     try {
-      sessionStorage.setItem("interviewResults", JSON.stringify(finalData));
-    } catch (e) {}
-        sessionStorage.removeItem("interviewSetup");
-
-    const avg = (key) =>
-      finalData.length
-        ? Math.round(finalData.reduce((sum, d) => sum + d[key], 0) / finalData.length)
-        : 0;
-
-    const totalWords = finalData.reduce((s, d) => s + d.wordCount, 0);
-    const totalFillers = finalData.reduce((s, d) => s + d.fillerCount, 0);
-    const fillerControlScore =
-      totalWords > 0 ? Math.max(0, Math.round(100 - (totalFillers / totalWords) * 400)) : 100;
-    const engagementScore = Math.min(100, Math.round(avg("wordCount") / 1.3));
-
-    axios
-      .post(
-        "http://localhost:8000/interviews",
-        {
-          overall_confidence: avg("confidence"),
-          overall_clarity: avg("clarity"),
-          overall_pacing: avg("pace"),
-          filler_control: fillerControlScore,
-          engagement: engagementScore,
-          questions_data: finalData,
-        },
+      const res = await axios.post(
+        "http://localhost:8000/analyze",
+        { question, answer: transcript.trim() },
         { headers: { Authorization: `Bearer ${token}` } }
-      )
-      .catch((err) => console.error("Failed to save interview to history:", err));
+      );
+      analysis = res.data;
+    } catch (err) {
+      if (err.response && err.response.status === 401) {
+        logout();
+        navigate("/login");
+        return;
+      }
+      console.error("Analysis failed, using live estimate:", err);
+    }
 
-    navigate("/results");
-  }
-};
+    sessionDataRef.current.push({
+      question,
+      transcript: transcript.trim(),
+      wordCount,
+      fillerCount,
+      pace,
+      confidence: analysis ? analysis.confidence : confidence,
+      clarity: analysis ? analysis.clarity : clarity,
+      relevance: analysis ? analysis.relevance : 0,
+      depth: analysis ? analysis.depth : 0,
+      correctness: analysis ? analysis.correctness : 0,
+      feedback: analysis ? analysis.feedback : "",
+      answerQuality: analysis ? analysis.answer_quality : 0,
+    });
+
+    if (qIndex < QUESTIONS.length - 1) {
+      goToQuestion(qIndex + 1);
+      setAnalyzing(false);
+    } else {
+      const finalData = sessionDataRef.current;
+
+      try {
+        sessionStorage.setItem("interviewResults", JSON.stringify(finalData));
+      } catch (e) {}
+      sessionStorage.removeItem("interviewSetup");
+
+      const avg = (key) =>
+        finalData.length
+          ? Math.round(finalData.reduce((sum, d) => sum + d[key], 0) / finalData.length)
+          : 0;
+
+      const totalWords = finalData.reduce((s, d) => s + d.wordCount, 0);
+      const totalFillers = finalData.reduce((s, d) => s + d.fillerCount, 0);
+      const fillerControlScore =
+        totalWords > 0 ? Math.max(0, Math.round(100 - (totalFillers / totalWords) * 400)) : 100;
+      const engagementScore = Math.min(100, Math.round(avg("wordCount") / 1.3));
+
+      try {
+        await axios.post(
+          "http://localhost:8000/interviews",
+          {
+            overall_confidence: avg("confidence"),
+            overall_clarity: avg("clarity"),
+            overall_pacing: avg("pace"),
+            filler_control: fillerControlScore,
+            engagement: engagementScore,
+            questions_data: finalData,
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+      } catch (err) {
+        console.error("Failed to save interview to history:", err);
+      }
+
+      navigate("/results");
+    }
+  };
 
   const words = transcript.trim() ? transcript.trim().split(/\s+/) : [];
   const wordCount = words.length;
@@ -311,6 +354,11 @@ recognitionRef.current = recognition;
       {permissionError && (
         <div className="relative z-10 mx-6 md:mx-10 mt-4 rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
           {permissionError}
+        </div>
+      )}
+            {speechIssue && (
+        <div className="relative z-10 mx-6 md:mx-10 mt-4 rounded-lg border border-yellow-400/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-200">
+          {speechIssue}
         </div>
       )}
 
@@ -420,9 +468,12 @@ recognitionRef.current = recognition;
           <div className="flex justify-end gap-3">
             <button
               onClick={handleNext}
-              className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-teal-500 to-teal-600 px-6 py-3 font-semibold shadow-lg shadow-teal-500/20 hover:-translate-y-0.5 transition-transform"
+              disabled={analyzing}
+              className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-teal-500 to-teal-600 px-6 py-3 font-semibold shadow-lg shadow-teal-500/20 hover:-translate-y-0.5 transition-transform disabled:opacity-60"
             >
-              {qIndex < QUESTIONS.length - 1 ? (
+              {analyzing ? (
+                "Analysing your answer..."
+              ) : qIndex < QUESTIONS.length - 1 ? (
                 <>
                   Next Question <FaArrowRight className="text-sm" />
                 </>
