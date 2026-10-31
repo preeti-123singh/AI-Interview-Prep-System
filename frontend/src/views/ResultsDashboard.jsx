@@ -141,6 +141,20 @@ function QuestionCard({ item, index, isOpen, onToggle }) {
               <p className="text-sm text-navy-100/80 leading-relaxed">{item.feedback}</p>
             </div>
           )}
+                    {item.modelAnswer && (
+            <div className="mb-4 rounded-lg border border-white/10 bg-navy-600/50 px-4 py-3">
+              <p className="font-mono text-[10px] tracking-widest text-teal-400 mb-1">
+                WHAT A GOOD ANSWER INCLUDES
+              </p>
+              <p className="text-sm text-navy-100/80 leading-relaxed">{item.modelAnswer}</p>
+              {item.studyTopics && item.studyTopics.length > 0 && (
+                <p className="text-xs text-navy-100/60 mt-2">
+                  <span className="text-teal-400">Study: </span>
+                  {item.studyTopics.join(" • ")}
+                </p>
+              )}
+            </div>
+          )}
 
           <p className="text-xs text-navy-100/40 mb-1.5 font-mono tracking-wide">YOUR ANSWER</p>
           <p className="text-sm text-navy-100/70 leading-relaxed italic">
@@ -349,6 +363,11 @@ export default function ResultsDashboard() {
                   </div>
                   {w.feedback && (
                     <p className="text-xs text-navy-100/60 leading-relaxed mt-1.5">{w.feedback}</p>
+                  )}
+                   {w.studyTopics && w.studyTopics.length > 0 && (
+                    <p className="text-xs text-amber-200/80 mt-1.5">
+                      Study: {w.studyTopics.join(" • ")}
+                    </p>
                   )}
                 </div>
               ))}

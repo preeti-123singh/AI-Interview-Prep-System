@@ -179,14 +179,19 @@ def analyze(
     result["bert_similarity"] = result["relevance"]
     result["correctness"] = 0
     result["feedback"] = ""
+    result["model_answer"] = ""
+    result["study_topics"] = []
 
-    if result["word_count"] > 0 and not result["gave_up"]:
-        judged = llm_judge.judge_answer(req.question, req.answer)
-        if judged:
+    judged = llm_judge.judge_answer(req.question, req.answer)
+    if judged:
+        result["feedback"] = judged["feedback"]
+        result["model_answer"] = judged["model_answer"]
+        result["study_topics"] = judged["study_topics"]
+
+        if result["word_count"] > 0 and not result["gave_up"]:
             fluency = result.get("fluency", 0)
             result["relevance"] = judged["relevance"]
             result["correctness"] = judged["correctness"]
-            result["feedback"] = judged["feedback"]
             result["clarity"] = round(0.5 * judged["relevance"] + 0.5 * fluency)
             result["answer_quality"] = round(
                 0.45 * judged["correctness"]

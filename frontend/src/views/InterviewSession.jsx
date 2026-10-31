@@ -269,6 +269,8 @@ recognitionRef.current = recognition;
       depth: analysis ? analysis.depth : 0,
       correctness: analysis ? analysis.correctness : 0,
       feedback: analysis ? analysis.feedback : "",
+       modelAnswer: analysis ? analysis.model_answer : "",
+      studyTopics: analysis ? analysis.study_topics : [],
       answerQuality: analysis ? analysis.answer_quality : 0,
     });
 
