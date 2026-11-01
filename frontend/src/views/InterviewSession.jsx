@@ -11,7 +11,6 @@ import {
   FaClock,
   FaFlagCheckered,
   FaSignOutAlt,
-  
 } from "react-icons/fa";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
@@ -33,10 +32,72 @@ function formatTime(sec) {
   return `${m}:${s}`;
 }
 
+// Joins the recorded audio, makes it 16 kHz, and returns a WAV file as base64 text
+async function makeWavBase64(chunks, inputRate) {
+  let total = 0;
+  chunks.forEach((c) => (total += c.length));
+  if (total === 0) return null;
+
+  const merged = new Float32Array(total);
+  let offset = 0;
+  chunks.forEach((c) => {
+    merged.set(c, offset);
+    offset += c.length;
+  });
+
+  // The browser does the 16 kHz conversion with a proper filter
+  const targetRate = 16000;
+  const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const length = Math.ceil((merged.length * targetRate) / inputRate);
+  const offline = new OfflineCtx(1, length, targetRate);
+  const buf = offline.createBuffer(1, merged.length, inputRate);
+  buf.copyToChannel(merged, 0);
+  const src = offline.createBufferSource();
+  src.buffer = buf;
+  src.connect(offline.destination);
+  src.start();
+  const rendered = await offline.startRendering();
+  const samples = rendered.getChannelData(0);
+
+  const pcm = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+
+  const buffer = new ArrayBuffer(44 + pcm.length * 2);
+  const view = new DataView(buffer);
+  const writeStr = (pos, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(pos + i, str.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + pcm.length * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetRate, true);
+  view.setUint32(28, targetRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) view.setInt16(44 + i * 2, pcm[i], true);
+
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+  }
+  return btoa(binary);
+}
+
 export default function InterviewSession() {
   const navigate = useNavigate();
   const { logout, token } = useAuth();
-    const [setup] = useState(loadSetup);
+  const [setup] = useState(loadSetup);
   const QUESTIONS = setup ? setup.questions : [];
 
   useEffect(() => {
@@ -44,7 +105,7 @@ export default function InterviewSession() {
   }, [setup, navigate]);
   const [qIndex, setQIndex] = useState(0);
   const [analyzing, setAnalyzing] = useState(false);
-  const[speechIssue, setSpeechIssue] = useState(null);
+  const [speechIssue, setSpeechIssue] = useState(null);
   const [timeLeft, setTimeLeft] = useState(QUESTION_TIME);
   const [cameraOn, setCameraOn] = useState(true);
   const [micOn, setMicOn] = useState(false);
@@ -62,14 +123,18 @@ export default function InterviewSession() {
   const audioCtxRef = useRef(null);
   const analyserRef = useRef(null);
   const rafRef = useRef(null);
- const recognitionRef = useRef(null);
-const sessionDataRef = useRef([]);
-const framesRef = useRef([]);
-const micOnRef = useRef(false);
+  const recognitionRef = useRef(null);
+  const sessionDataRef = useRef([]);
+  const framesRef = useRef([]);
+  const micOnRef = useRef(false);
+  const audioChunksRef = useRef([]);
+  const audioRateRef = useRef(48000);
+  const streamIdRef = useRef(0);
 
   const question = QUESTIONS[qIndex];
 
   const startStream = useCallback(async (deviceId) => {
+  const myId = ++streamIdRef.current;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
     }
@@ -80,8 +145,12 @@ const micOnRef = useRef(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: deviceId ? { deviceId: { exact: deviceId } } : true,
-        audio: true,
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
       });
+      if (myId !== streamIdRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
 
@@ -91,6 +160,20 @@ const micOnRef = useRef(false);
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 64;
       source.connect(analyser);
+
+      // Records the raw audio so the backend can measure real pace and pauses
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      const silent = audioCtx.createGain();
+      silent.gain.value = 0;
+      source.connect(processor);
+      processor.connect(silent);
+      silent.connect(audioCtx.destination);
+      audioRateRef.current = audioCtx.sampleRate;
+      processor.onaudioprocess = (e) => {
+        if (!micOnRef.current || myId !== streamIdRef.current) return;
+        audioChunksRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      };
+
       audioCtxRef.current = audioCtx;
       analyserRef.current = analyser;
       setPermissionError(null);
@@ -139,10 +222,6 @@ const micOnRef = useRef(false);
         setInterim(interimText);
       };
 
-     recognition.onerror = (event) => {
-  console.warn("Speech recognition error:", event.error);
-};
-
       recognition.onerror = (event) => {
         console.warn("Speech recognition error:", event.error);
         if (event.error === "network") {
@@ -166,7 +245,7 @@ const micOnRef = useRef(false);
           }, 600);
         }
       };
-recognitionRef.current = recognition;
+      recognitionRef.current = recognition;
     }
 
     return () => {
@@ -183,12 +262,10 @@ recognitionRef.current = recognition;
     streamRef.current.getVideoTracks().forEach((t) => (t.enabled = cameraOn));
   }, [cameraOn]);
 
- useEffect(() => {
-  micOnRef.current = micOn;
-  if (!streamRef.current) return;
-  streamRef.current.getAudioTracks().forEach((t) => (t.enabled = micOn));
-
-  
+  useEffect(() => {
+    micOnRef.current = micOn;
+    if (!streamRef.current) return;
+    streamRef.current.getAudioTracks().forEach((t) => (t.enabled = micOn));
 
     if (micOn) {
       if (recognitionRef.current) {
@@ -229,6 +306,7 @@ recognitionRef.current = recognition;
     const id = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
     return () => clearInterval(id);
   }, [timeLeft, qIndex]);
+
   const captureFrame = useCallback(() => {
     const video = videoRef.current;
     if (!video || !cameraOn || video.videoWidth === 0) return;
@@ -246,17 +324,22 @@ recognitionRef.current = recognition;
   }, [captureFrame]);
 
   const goToQuestion = useCallback((nextIndex) => {
+    audioChunksRef.current = [];
     setQIndex(nextIndex);
     setTimeLeft(QUESTION_TIME);
     setTranscript("");
     setInterim("");
     setQuestionStartedAt(Date.now());
   }, []);
+
   const handleNext = async () => {
     if (analyzing) return;
     setAnalyzing(true);
     const frames = framesRef.current.slice();
     framesRef.current = [];
+    const audioChunks = audioChunksRef.current;
+    audioChunksRef.current = [];
+    const audioRate = audioRateRef.current;
 
     let analysis = null;
     try {
@@ -286,6 +369,21 @@ recognitionRef.current = recognition;
       console.error("Face analysis failed:", err);
     }
 
+    let voice = null;
+    const wavBase64 = await makeWavBase64(audioChunks, audioRate);
+    if (wavBase64 && wordCount > 0) {
+      try {
+        const voiceRes = await axios.post(
+          "http://localhost:8000/voice/analyze",
+          { audio: wavBase64 },
+          { headers: { Authorization: `Bearer ${token}` }, timeout: 60000 }
+        );
+        voice = voiceRes.data;
+      } catch (err) {
+        console.error("Voice analysis failed:", err);
+      }
+    }
+
     const speechConfidence = analysis ? analysis.confidence : confidence;
     const finalConfidence =
       face && face.face_detected > 0 && wordCount > 0
@@ -297,7 +395,13 @@ recognitionRef.current = recognition;
       transcript: transcript.trim(),
       wordCount,
       fillerCount,
-      pace,
+      pace: voice && voice.wpm > 0 ? voice.wpm : pace,
+      paceScore: voice ? voice.pace_score : 0,
+      paceLabel: voice ? voice.pace_label : "",
+      pauseCount: voice ? voice.pause_count : 0,
+      longestPause: voice ? voice.longest_pause : 0,
+      totalPause: voice ? voice.total_pause : 0,
+      voiceUsed: voice ? voice.wpm > 0 : false,
       confidence: finalConfidence,
       faceExpression: face ? face.expression_score : 0,
       facePresence: face ? face.face_presence : 0,
@@ -307,7 +411,7 @@ recognitionRef.current = recognition;
       depth: analysis ? analysis.depth : 0,
       correctness: analysis ? analysis.correctness : 0,
       feedback: analysis ? analysis.feedback : "",
-       modelAnswer: analysis ? analysis.model_answer : "",
+      modelAnswer: analysis ? analysis.model_answer : "",
       studyTopics: analysis ? analysis.study_topics : [],
       answerQuality: analysis ? analysis.answer_quality : 0,
     });
@@ -332,7 +436,7 @@ recognitionRef.current = recognition;
       const totalFillers = finalData.reduce((s, d) => s + d.fillerCount, 0);
       const fillerControlScore =
         totalWords > 0 ? Math.max(0, Math.round(100 - (totalFillers / totalWords) * 400)) : 100;
-           const answeredData = finalData.filter((d) => d.wordCount > 0);
+      const answeredData = finalData.filter((d) => d.wordCount > 0);
       const avgPresence = answeredData.length
         ? Math.round(answeredData.reduce((s, d) => s + (d.facePresence || 0), 0) / answeredData.length)
         : 0;
@@ -381,7 +485,7 @@ recognitionRef.current = recognition;
           <span>
             Question <span className="text-white font-semibold">{qIndex + 1}</span> of {QUESTIONS.length}
           </span>
-                   <span className={`flex items-center gap-1.5 ${timeLeft <= 20 ? "text-red-400" : "text-teal-400"}`}>
+          <span className={`flex items-center gap-1.5 ${timeLeft <= 20 ? "text-red-400" : "text-teal-400"}`}>
             <FaClock /> {formatTime(timeLeft)}
           </span>
           <button
@@ -401,7 +505,7 @@ recognitionRef.current = recognition;
           {permissionError}
         </div>
       )}
-            {speechIssue && (
+      {speechIssue && (
         <div className="relative z-10 mx-6 md:mx-10 mt-4 rounded-lg border border-yellow-400/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-200">
           {speechIssue}
         </div>

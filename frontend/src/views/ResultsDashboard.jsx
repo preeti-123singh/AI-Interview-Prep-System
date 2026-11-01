@@ -23,6 +23,7 @@ import {
   FaSignOutAlt,
   FaHistory,
   FaExclamationTriangle,
+  FaMicrophone,
 } from "react-icons/fa";
 import { useAuth } from "../context/AuthContext";
 
@@ -35,7 +36,7 @@ function buildRecommendations(data) {
   const recs = [];
   const avgConfidence = average(data, "confidence");
   const avgClarity = average(data, "clarity");
-  const avgPace = average(data, "pace");
+  const avgPace = average(data.filter((d) => d.wordCount > 0), "pace");
   const avgCorrectness = average(data, "correctness");
   const totalFillers = data.reduce((s, d) => s + d.fillerCount, 0);
   const totalWords = data.reduce((s, d) => s + d.wordCount, 0);
@@ -62,6 +63,14 @@ function buildRecommendations(data) {
     recs.push({
       title: "Slow down a little",
       detail: `Your average pace was ${avgPace} words/minute — on the faster side. Slowing down slightly can make answers easier to follow.`,
+    });
+  }
+  const answeredForPauses = data.filter((d) => d.wordCount > 0);
+  const avgPausesTip = average(answeredForPauses, "pauseCount");
+  if (avgPausesTip >= 4) {
+    recs.push({
+      title: "Reduce long pauses",
+      detail: `You paused about ${avgPausesTip} times per answer. Plan your first sentence before you start, so your answer flows without breaks.`,
     });
   }
   if (avgClarity < 60) {
@@ -117,14 +126,16 @@ function QuestionCard({ item, index, isOpen, onToggle }) {
           transition={{ duration: 0.25 }}
           className="px-5 pb-5"
         >
-          <div className="grid-cols-2 sm:grid-cols-6 gap-3 mb-4">
+           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
             {[
               ["Confidence", item.confidence, "%"],
               ["Clarity", item.clarity, "%"],
               ["Relevance", item.relevance, "%"],
               ["Correctness", item.correctness, "%"],
-              ["Expression", item.faceExpression, "%"],
+              ["Expression", item.wordCount > 0 ? item.faceExpression : 0, "%"],
               ["Pace", item.pace, " WPM"],
+              ["Pauses", item.pauseCount, ""],
+              ["Longest pause", Number(item.longestPause || 0).toFixed(1), " s"],
             ].map(([label, val, suffix]) => (
               <div key={label} className="rounded-lg bg-navy-600/60 px-3 py-2.5 text-center">
                 <div className="text-lg font-bold text-white">
@@ -213,6 +224,13 @@ export default function ResultsDashboard() {
   const avgPace = average(data, "pace");
   const avgCorrectness = average(data, "correctness");
   const avgQuality = average(data, "answerQuality");
+  const answered = data.filter((d) => d.wordCount > 0);
+  const avgVoicePace = average(answered, "pace");
+  const avgPaceScore = average(answered, "paceScore");
+  const avgPauses = average(answered, "pauseCount");
+  const longestPauseAll = Number(
+    Math.max(0, ...answered.map((d) => d.longestPause || 0))
+  ).toFixed(1);
   const overallScore =
     avgQuality > 0
       ? Math.round((avgConfidence + avgClarity + avgQuality) / 3)
@@ -222,7 +240,13 @@ export default function ResultsDashboard() {
     { skill: "Confidence", value: avgConfidence },
     { skill: "Clarity", value: avgClarity },
     { skill: "Correctness", value: avgCorrectness },
-    { skill: "Pacing", value: Math.max(0, 100 - Math.abs(avgPace - 135) * 0.6) },
+       {
+      skill: "Pacing",
+      value:
+        avgPaceScore > 0
+          ? avgPaceScore
+          : Math.max(0, 100 - Math.abs(avgPace - 135) * 0.6),
+    },
     {
       skill: "Filler Control",
       value: Math.max(
@@ -389,6 +413,35 @@ export default function ResultsDashboard() {
             </div>
           </motion.div>
         )}
+                <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.28 }}
+          className="rounded-2xl border border-white/10 bg-navy-500/40 px-5 py-5 mb-8"
+        >
+          <span className="flex items-center gap-2 font-mono text-[11px] tracking-widest text-teal-400 mb-4">
+            <FaMicrophone /> VOICE ANALYSIS
+          </span>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              ["Average pace", avgVoicePace, " WPM"],
+              ["Pace score", avgPaceScore, "%"],
+              ["Pauses per answer", avgPauses, ""],
+              ["Longest pause", longestPauseAll, " s"],
+            ].map(([label, val, suffix]) => (
+              <div key={label} className="rounded-lg bg-navy-600/60 px-3 py-3 text-center">
+                <div className="text-xl font-bold text-white">
+                  {val}
+                  <span className="text-xs text-navy-100/50">{suffix}</span>
+                </div>
+                <div className="text-[10px] text-navy-100/50 mt-0.5">{label}</div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-navy-100/50 mt-3">
+            A good speaking pace for interviews is about 120 to 150 words per minute.
+          </p>
+        </motion.div>
 
         <motion.div
           initial={{ opacity: 0, y: 12 }}

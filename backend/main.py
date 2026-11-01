@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from typing import List
+import base64
 import json
 import os
 import re
@@ -22,6 +23,11 @@ try:
     face_engine._load()
 except Exception as e:
     print("Face model not loaded:", e)
+import voice_engine
+try:
+    voice_engine._load()
+except Exception as e:
+    print("Voice model not loaded:", e)
 
 Base.metadata.create_all(bind=engine)
 load_dotenv()
@@ -101,6 +107,8 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 @app.get("/me", response_model=schemas.UserOut)
 def read_current_user(current_user: models.User = Depends(get_current_user)):
     return current_user
+
+
 class QuestionRequest(BaseModel):
     domain: str
     difficulty: str = "medium"
@@ -170,6 +178,8 @@ def generate_questions(
         "source": source,
         "questions": questions,
     }
+
+
 class AnalyzeRequest(BaseModel):
     question: str
     answer: str
@@ -217,6 +227,8 @@ def analyze(
                 result["answer_quality"] = min(result["answer_quality"], 25)
 
     return result
+
+
 class FaceRequest(BaseModel):
     frames: List[str]
 
@@ -227,6 +239,30 @@ def face_analyze(
     current_user: models.User = Depends(get_current_user),
 ):
     return face_engine.analyze_frames(req.frames[:8])
+
+
+class VoiceRequest(BaseModel):
+    audio: str  # base64 WAV, 16 kHz, mono
+
+
+@app.post("/voice/analyze")
+def voice_analyze(
+    req: VoiceRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    try:
+        b64 = req.audio.split(",")[-1]
+        wav_bytes = base64.b64decode(b64)
+        # TEST ONLY: saves the last answer so you can listen to it. Remove later.
+        with open("last_voice.wav", "wb") as f:
+            f.write(wav_bytes)
+        result = voice_engine.analyze_wav_bytes(wav_bytes)
+        print("Voice result:", result)
+        return result
+    except Exception as e:
+        print("Voice analysis failed:", e)
+        raise HTTPException(status_code=400, detail="Could not read the audio")
+
 
 @app.post("/interviews", response_model=schemas.SessionOut)
 def create_interview(
@@ -286,4 +322,3 @@ def list_interviews(
         )
         for s in sessions
     ]
-
